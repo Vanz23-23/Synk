@@ -1,0 +1,35 @@
+.env
+__pycache__/
+*.pyc
+*.pyo
+logs/
+.DS_Store
+.venv/
+
+# Backtest outputs (scripts ship; results don't)
+backtest/results/
+backtest/trades_log.csv
+backtest/trades_log_haven.csv
+backtest/haven_exit_breakdown.txt
+backtest/regime_comparison_results.txt
+backtest/results_summary.txt
+backtest/results_summary_haven.txt
+
+# Caches & runtime data
+data/price_cache/
+data/expected_positions.json
+data/gpr_daily_recent.xls
+
+# Internal session notes
+CLAUDE_CODE_CONTEXT.md
+bot_restart.log
+
+# Tooling
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.vscode/
+.idea/
+*.egg-info/
+build/
+dist/

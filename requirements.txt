@@ -1,0 +1,13 @@
+# Pinned to versions verified working in the dev environment (Python 3.14).
+# Loosen the upper bound only after testing.
+
+alpaca-py==0.43.2
+apscheduler==3.11.2
+huggingface-hub==1.11.0
+lumibot==4.5.1
+pandas==3.0.1
+python-dotenv==1.2.2
+requests==2.33.1
+torch==2.11.0
+transformers==5.5.4
+xlrd==2.0.2
