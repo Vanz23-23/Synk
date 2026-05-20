@@ -77,7 +77,11 @@ Sentiment is pre-computed in a daily batch (`signals/finbert_drift_monitor.py`) 
 
 ## Risk management
 
-Three hard limits in `risk/kill_switch.py`. All three trigger a halt + Telegram alert and require **manual recovery** (no auto-reset):
+Two layers of risk control.
+
+**Position-level stop loss (8%)** - every entry submits an Alpaca bracket order with a stop-loss leg at `entry_price × 0.92` (`execution/order_executor.py:_STOP_LOSS_POSITION_PCT`). A stop-out exits that one position; the bot keeps trading.
+
+**Kill switch** - three hard portfolio-level limits in `risk/kill_switch.py`. All three halt the bot entirely and require **manual recovery** (no auto-reset, Telegram alert sent):
 
 | Limit | Threshold |
 |---|---|
