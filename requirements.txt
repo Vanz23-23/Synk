@@ -1,4 +1,5 @@
-# Pinned to versions verified working in the dev environment (Python 3.14).
+# Dev environment: Python 3.14. VPS target: Python 3.13 (see deploy/setup.sh).
+# No 3.14-specific features used — 3.13 is the production baseline.
 # Loosen the upper bound only after testing.
 
 alpaca-py==0.43.2
