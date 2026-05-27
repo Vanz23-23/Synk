@@ -35,6 +35,8 @@ _LOG_DIR = _HERE / "logs"
 if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 
+from alerts.telegram_util import send_telegram  # noqa: E402
+
 # ---------------------------------------------------------------------------
 # Constants — all thresholds live here, nowhere else
 # ---------------------------------------------------------------------------
@@ -635,32 +637,6 @@ def build_report(
     parts.append(f"🏁 *VERDICT*\n{verdict}")
 
     return "\n".join(parts)
-
-
-# ---------------------------------------------------------------------------
-# Telegram sender
-# ---------------------------------------------------------------------------
-def send_telegram(message: str) -> bool:
-    """Send message to Telegram. Returns True on success."""
-    import requests  # deferred: only needed when actually sending
-
-    token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
-    if not token or not chat_id:
-        log.error("Telegram not configured — TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID missing")
-        return False
-    try:
-        resp = requests.post(
-            f"https://api.telegram.org/bot{token}/sendMessage",
-            json={"chat_id": chat_id, "text": message, "parse_mode": "Markdown"},
-            timeout=_TELEGRAM_TIMEOUT,
-        )
-        resp.raise_for_status()
-        log.info("Telegram report sent (%d chars)", len(message))
-        return True
-    except Exception as exc:
-        log.error("Telegram send failed: %s", exc)
-        return False
 
 
 # ---------------------------------------------------------------------------

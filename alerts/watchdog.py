@@ -50,12 +50,20 @@ _HEARTBEAT_PATH = _LOG_DIR / "heartbeat.json"
 _KS_STATE_PATH = _LOG_DIR / "kill_switch_state.json"
 _WD_STATE_PATH = _LOG_DIR / "watchdog_state.json"
 
+if str(_HERE) not in sys.path:
+    sys.path.insert(0, str(_HERE))
+
+from dotenv import load_dotenv  # noqa: E402
+
+from alerts.telegram_util import send_telegram  # noqa: E402
+
+load_dotenv()
+
 # ---------------------------------------------------------------------------
 # Tuneable thresholds
 # ---------------------------------------------------------------------------
 _HEARTBEAT_MAX_AGE_SECONDS = 10 * 60   # alert if heartbeat > 10 min old
 _REHALT_ALERT_INTERVAL = 60 * 60       # re-alert on HALTED state every 60 min
-_TELEGRAM_TIMEOUT = 5
 
 # ---------------------------------------------------------------------------
 # Logging — watchdog.log is separate so it survives main.py crashes
@@ -81,31 +89,6 @@ def _setup_logging() -> logging.Logger:
 
 
 log = _setup_logging()
-
-
-# ---------------------------------------------------------------------------
-# Telegram (shared helper — mirrors kill_switch.py implementation)
-# ---------------------------------------------------------------------------
-def _send_telegram(message: str) -> bool:
-    """Send a Telegram alert. Returns True on success, False on failure."""
-    token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
-    if not token or not chat_id:
-        log.warning("Telegram not configured — alert suppressed: %s", message)
-        return False
-    try:
-        import requests  # noqa: PLC0415
-        resp = requests.post(
-            f"https://api.telegram.org/bot{token}/sendMessage",
-            json={"chat_id": chat_id, "text": f"[SYNK WATCHDOG] {message}"},
-            timeout=_TELEGRAM_TIMEOUT,
-        )
-        resp.raise_for_status()
-        log.info("Telegram alert sent: %s", message)
-        return True
-    except Exception as exc:
-        log.error("Telegram alert failed: %s", exc)
-        return False
 
 
 # ---------------------------------------------------------------------------
@@ -166,7 +149,7 @@ def _check_heartbeat(wd_state: dict) -> None:
         "main.py may be hung or crashed."
     )
     log.critical(msg)
-    _send_telegram(msg)
+    send_telegram(msg)
     wd_state["last_heartbeat_alert_utc"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
@@ -198,7 +181,7 @@ def _check_kill_switch(wd_state: dict) -> None:
         return
 
     msg = f"STILL HALTED — reason: {halt_reason} | halted since: {halted_at}. Manual reset required."
-    _send_telegram(msg)
+    send_telegram(msg)
     wd_state["last_halted_alert_utc"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 

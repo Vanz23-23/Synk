@@ -14,7 +14,7 @@ Drift is flagged when any of the following are true:
 
 Public API:
     run_batch_check(window_days=7) -> dict  — called by job_finbert_drift in main.py
-    send_telegram_alert(message)            — called internally; usable standalone
+    send_telegram(message)                  — from alerts.telegram_util; usable standalone
 
 Usage (standalone test):
     python -c "from signals.finbert_drift_monitor import run_batch_check; \
@@ -32,8 +32,6 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-import requests
-
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
@@ -44,6 +42,8 @@ _SENTIMENT_JSONL = _LOG_DIR / "sentiment_cache.jsonl"
 if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 
+from alerts.telegram_util import send_telegram  # noqa: E402
+
 # ---------------------------------------------------------------------------
 # Tuneable constants
 # ---------------------------------------------------------------------------
@@ -51,7 +51,6 @@ _MIN_RECORDS = 12             # fewer records → INSUFFICIENT_DATA (< ~0.5 days
 _STUCK_CLASS_THRESHOLD = 0.95  # >95% same dominant_class → stuck predictions
 _MIN_MEAN_PROB = 0.55         # mean dominant_prob below this → confidence collapse
 _MIN_COVERAGE_PCT = 0.50      # <50% expected hourly readings → GDELT gaps
-_TELEGRAM_TIMEOUT = 5
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -77,28 +76,6 @@ def _setup_logging() -> logging.Logger:
 
 
 log = _setup_logging()
-
-
-# ---------------------------------------------------------------------------
-# Telegram (best-effort — never raises)
-# ---------------------------------------------------------------------------
-def send_telegram_alert(message: str) -> None:
-    """Send a drift alert via Telegram. Reads credentials from env."""
-    token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
-    if not token or not chat_id:
-        log.warning("Telegram not configured — drift alert suppressed: %s", message)
-        return
-    try:
-        resp = requests.post(
-            f"https://api.telegram.org/bot{token}/sendMessage",
-            json={"chat_id": chat_id, "text": f"[SYNK DRIFT] {message}"},
-            timeout=_TELEGRAM_TIMEOUT,
-        )
-        resp.raise_for_status()
-        log.info("Drift alert sent via Telegram")
-    except Exception as exc:
-        log.error("Telegram drift alert failed (non-fatal): %s", exc)
 
 
 # ---------------------------------------------------------------------------
@@ -257,7 +234,7 @@ def run_batch_check(window_days: int = 7) -> dict:
             f"{reasons_text}"
         )
         log.warning("FinBERT drift detected: %s", drift_reasons)
-        send_telegram_alert(msg)
+        send_telegram(f"[SYNK DRIFT] {msg}")
         status = "DRIFT_DETECTED"
     else:
         log.info(

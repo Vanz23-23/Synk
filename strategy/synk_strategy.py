@@ -439,7 +439,14 @@ def save_exit_state(state: dict[str, str | None]) -> None:
     _EXIT_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
     tmp = _EXIT_STATE_PATH.with_suffix(".tmp")
     tmp.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
-    os.replace(tmp, _EXIT_STATE_PATH)
+    # Retry on OSError — OneDrive can briefly lock the .tmp file during sync
+    for delay in (0.2, 0.5, 1.0, 2.0):
+        try:
+            os.replace(tmp, _EXIT_STATE_PATH)
+            return
+        except OSError:
+            time.sleep(delay)
+    os.replace(tmp, _EXIT_STATE_PATH)  # final attempt; raises if still locked
 
 
 def record_exit(symbol: str) -> None:

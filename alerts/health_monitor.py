@@ -26,8 +26,6 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-import requests
-
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
@@ -38,31 +36,18 @@ _HEALTH_JSONL = _LOG_DIR / "health.jsonl"
 if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 
+from dotenv import load_dotenv  # noqa: E402
+
+from alerts.telegram_util import send_telegram  # noqa: E402
+
+load_dotenv()
+
 # ---------------------------------------------------------------------------
 # Tuneable thresholds (seconds)
 # ---------------------------------------------------------------------------
-_TELEGRAM_TIMEOUT = 5
 _SENTIMENT_MAX_AGE = 90 * 60       # 90 min: sentiment + GDELT freshness proxy
 _PRICE_MAX_AGE = 25 * 3600         # 25 h:   price cache (daily bars)
 _GPR_MAX_AGE = 25 * 3600           # 25 h:   GPR XLS file
-
-# ---------------------------------------------------------------------------
-# Telegram alert (best-effort — never raises)
-# ---------------------------------------------------------------------------
-def _send_telegram(message: str) -> None:
-    token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
-    if not token or not chat_id:
-        log.warning("Telegram not configured — health alert suppressed")
-        return
-    try:
-        requests.post(
-            f"https://api.telegram.org/bot{token}/sendMessage",
-            json={"chat_id": chat_id, "text": message, "parse_mode": "Markdown"},
-            timeout=_TELEGRAM_TIMEOUT,
-        )
-    except Exception as exc:
-        log.error("Telegram health alert failed (non-fatal): %s", exc)
 
 
 # ---------------------------------------------------------------------------
@@ -186,7 +171,7 @@ def check_health() -> HealthStatus:
         for issue in issues:
             log.warning("Health issue: %s", issue)
         issues_text = "\n".join(f"- {i}" for i in issues)
-        _send_telegram(f"\u26a0\ufe0f *SYNK HEALTH ALERT*\n{issues_text}")
+        send_telegram(f"\u26a0\ufe0f *SYNK HEALTH ALERT*\n{issues_text}")
 
     return status
 

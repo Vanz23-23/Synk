@@ -53,7 +53,7 @@ if str(_HERE) not in sys.path:
 # Tuneable constants
 # ---------------------------------------------------------------------------
 SYMBOLS: list[str] = ["GLD", "FXY", "LMT", "NOC", "ITA"]  # public for momentum.py
-_LOOKBACK_DAYS = 365        # 365 calendar days ≈ 252 trading days; required for check_fxy_viability() 52-week low
+_LOOKBACK_DAYS = 400        # 400 calendar days ≈ 275 trading days; ensures ≥252 bars for check_fxy_viability() 52-week low
 _CACHE_MAX_AGE_SECONDS = 86400  # re-fetch if cache is >= 24h old
 _FEED = DataFeed.IEX        # regular session only — no pre/post market bleed
 _ADJUSTMENT = Adjustment.ALL  # split + dividend adjusted

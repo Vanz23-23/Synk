@@ -33,7 +33,6 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-import requests
 from dotenv import load_dotenv
 
 from apscheduler.schedulers.blocking import BlockingScheduler
@@ -47,6 +46,8 @@ _HERE = Path(__file__).resolve().parent  # synk/ root
 
 if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
+
+from alerts.telegram_util import send_telegram  # noqa: E402
 
 _LOG_DIR = _HERE / "logs"
 _HEARTBEAT_PATH = _LOG_DIR / "heartbeat.json"
@@ -75,26 +76,6 @@ def _setup_logging() -> logging.Logger:
 
 
 log = _setup_logging()
-
-
-# ---------------------------------------------------------------------------
-# Telegram helper
-# ---------------------------------------------------------------------------
-def _send_telegram(message: str) -> None:
-    token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
-    if not token or not chat_id:
-        log.warning("Telegram not configured — startup ping suppressed")
-        return
-    try:
-        requests.post(
-            f"https://api.telegram.org/bot{token}/sendMessage",
-            json={"chat_id": chat_id, "text": message, "parse_mode": "Markdown"},
-            timeout=5,
-        )
-        log.info("Telegram startup ping sent")
-    except Exception as exc:
-        log.error("Telegram startup ping failed: %s", exc)
 
 
 # ---------------------------------------------------------------------------
@@ -449,7 +430,7 @@ def main() -> None:
         "finbert_drift=08:00 UTC | gpr=16:30 ET"
     )
 
-    _send_telegram(
+    send_telegram(
         f"🟢 *Synk bot started*\n"
         f"PID: {os.getpid()}\n"
         f"Jobs armed: {len(job_ids)}\n"

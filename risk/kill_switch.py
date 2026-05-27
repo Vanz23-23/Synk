@@ -49,13 +49,18 @@ _STATE_PATH = _LOG_DIR / "kill_switch_state.json"
 if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 
+from dotenv import load_dotenv  # noqa: E402
+
+from alerts.telegram_util import send_telegram  # noqa: E402
+
+load_dotenv()
+
 # ---------------------------------------------------------------------------
 # Tuneable constants — hard limits, change only with deliberate intent
 # ---------------------------------------------------------------------------
 _STOP_LOSS_PCT = 0.02       # trigger 1: 2% max loss per trade position
 _DAILY_LOSS_PCT = 0.05      # trigger 2: 5% daily NAV drawdown
 _PEAK_DRAWDOWN_PCT = 0.30   # trigger 3: 30% from portfolio high-water mark
-_TELEGRAM_TIMEOUT = 5       # seconds for Telegram HTTP request
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -123,34 +128,14 @@ def _save_state(state: dict) -> None:
     _LOG_DIR.mkdir(parents=True, exist_ok=True)
     tmp = _STATE_PATH.with_suffix(".tmp")
     tmp.write_text(json.dumps(state, indent=2), encoding="utf-8")
-    os.replace(tmp, _STATE_PATH)
-
-
-# ---------------------------------------------------------------------------
-# Telegram alert (best-effort — never raises)
-# ---------------------------------------------------------------------------
-def _send_telegram_alert(message: str) -> None:
-    """
-    Send a Telegram message if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are set.
-    Fails silently — a missing alert must never crash the kill switch.
-    """
-    token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
-    if not token or not chat_id:
-        log.warning("Telegram not configured — alert not sent: %s", message)
-        return
-    try:
-        import requests  # noqa: PLC0415
-        url = f"https://api.telegram.org/bot{token}/sendMessage"
-        resp = requests.post(
-            url,
-            json={"chat_id": chat_id, "text": f"[SYNK KILL SWITCH] {message}"},
-            timeout=_TELEGRAM_TIMEOUT,
-        )
-        resp.raise_for_status()
-        log.info("Telegram alert sent")
-    except Exception as exc:
-        log.error("Telegram alert failed (non-fatal): %s", exc)
+    # Retry on OSError — OneDrive can briefly lock the .tmp file during sync
+    for delay in (0.2, 0.5, 1.0, 2.0):
+        try:
+            os.replace(tmp, _STATE_PATH)
+            return
+        except OSError:
+            time.sleep(delay)
+    os.replace(tmp, _STATE_PATH)  # final attempt; raises if still locked
 
 
 # ---------------------------------------------------------------------------
@@ -238,7 +223,7 @@ def check_triggers(config=None) -> KillStatus:
             "last_checked_utc": now_utc,
         }
         _save_state(new_state)
-        _send_telegram_alert(halt_reason)
+        send_telegram(f"[SYNK KILL SWITCH] {halt_reason}")
         return KillStatus(
             triggered=True,
             reason=halt_reason,

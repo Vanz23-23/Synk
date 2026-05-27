@@ -37,8 +37,6 @@ from pathlib import Path
 
 import re
 
-import requests
-
 # ---------------------------------------------------------------------------
 # Paths and sys.path
 # ---------------------------------------------------------------------------
@@ -47,13 +45,13 @@ _HERE = Path(__file__).resolve().parent.parent  # synk/ root
 if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 
+from alerts.telegram_util import send_telegram  # noqa: E402
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 _STOP_LOSS_POSITION_PCT = 0.08  # 8% position-level stop (entry_price × 0.92); ~0.32% portfolio loss per stop-out at 4% position size
 TAKE_PROFIT_PCT = 0.03          # legacy bracket path only — not used in main submit_entry flow
-
-_TELEGRAM_TIMEOUT = 5
 _LOG_DIR = _HERE / "logs"
 _ORDERS_JSONL = _LOG_DIR / "orders.jsonl"
 _TRADES_JSONL = _LOG_DIR / "trades.jsonl"
@@ -99,25 +97,6 @@ class OrderResult:
     stop_price: float
     take_profit_price: float
     error: str               # "" if no error
-
-
-# ---------------------------------------------------------------------------
-# Telegram alert (best-effort — never raises)
-# ---------------------------------------------------------------------------
-def _send_telegram(message: str) -> None:
-    token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
-    if not token or not chat_id:
-        log.warning("Telegram not configured — alert suppressed: %s", message[:60])
-        return
-    try:
-        requests.post(
-            f"https://api.telegram.org/bot{token}/sendMessage",
-            json={"chat_id": chat_id, "text": message, "parse_mode": "Markdown"},
-            timeout=_TELEGRAM_TIMEOUT,
-        )
-    except Exception as exc:
-        log.error("Telegram alert failed (non-fatal): %s", exc)
 
 
 # ---------------------------------------------------------------------------
@@ -377,7 +356,7 @@ def submit_entry(instruction: "TradeInstruction", cfg: object) -> bool:  # type:
         )
     except Exception as exc:
         log.error("ENTRY FAILED | %s — client init: %s", instruction.symbol, exc)
-        _send_telegram(f"🔴 *SYNK ENTRY FAILED* | {instruction.symbol} | client error")
+        send_telegram(f"🔴 *SYNK ENTRY FAILED* | {instruction.symbol} | client error")
         return False
 
     if _has_open_position(client, instruction.symbol):
@@ -416,7 +395,7 @@ def submit_entry(instruction: "TradeInstruction", cfg: object) -> bool:  # type:
         _regime_m = re.search(r'regime=(\S+)\s+z=([^\s|]+)', instruction.rationale)
         _regime_state = _regime_m.group(1) if _regime_m else "UNKNOWN"
         _z_score = float(_regime_m.group(2)) if _regime_m else 0.0
-        _send_telegram(
+        send_telegram(
             f"\U0001f7e2 *SYNK ENTRY*\n"
             f"{instruction.symbol} | BUY {instruction.quantity} @ ${instruction.entry_price:.2f}\n"
             f"Alloc: {instruction.allocation_pct * 100:.1f}% NAV\n"
@@ -427,7 +406,7 @@ def submit_entry(instruction: "TradeInstruction", cfg: object) -> bool:  # type:
 
     except Exception as exc:
         log.error("ENTRY FAILED | %s | %s", instruction.symbol, exc)
-        _send_telegram(f"\U0001f534 *SYNK ENTRY FAILED* | {instruction.symbol} | {exc}")
+        send_telegram(f"\U0001f534 *SYNK ENTRY FAILED* | {instruction.symbol} | {exc}")
         return False
 
 
@@ -497,7 +476,7 @@ def submit_exit(symbol: str, quantity: int, cfg: object, exit_reason: str = "") 
         _update_trade_exit(symbol, exit_price, now, pnl_pct, exit_reason)
         record_exit(symbol)
 
-        _send_telegram(
+        send_telegram(
             f"\U0001f534 *SYNK EXIT*\n"
             f"{symbol} | SELL {quantity} @ ${exit_price:.2f}\n"
             f"PnL: {pnl_pct:+.2f}%\n"
@@ -508,7 +487,7 @@ def submit_exit(symbol: str, quantity: int, cfg: object, exit_reason: str = "") 
 
     except Exception as exc:
         log.error("EXIT FAILED | %s | %s", symbol, exc)
-        _send_telegram(f"\U0001f534 *SYNK EXIT FAILED* | {symbol} | {exc}")
+        send_telegram(f"\U0001f534 *SYNK EXIT FAILED* | {symbol} | {exc}")
         return False
 
 
@@ -571,7 +550,7 @@ def check_exits(cfg: object) -> None:
                 )
                 _current_price = float(pos.current_price or 0)
                 _loss_pct = abs(unrealised_plpc * 100)
-                _send_telegram(
+                send_telegram(
                     f"\U0001f6d1 *SYNK STOP LOSS*\n"
                     f"{symbol} | SELL {quantity} @ ${_current_price:.2f}\n"
                     f"Loss: {_loss_pct:.2f}% (threshold: -8%)"
@@ -595,7 +574,7 @@ def check_exits(cfg: object) -> None:
                         "check_exits: SH_HOSTILE_REGIME | GLD | return_5d=%.2f%% — exiting",
                         sh_result["return_5d"] * 100,
                     )
-                    _send_telegram(
+                    send_telegram(
                         f"\U0001f6d1 *SYNK EXIT — SH_HOSTILE_REGIME*\n"
                         f"GLD | return_5d={sh_result['return_5d']:+.2%}\n"
                         f"Gold falling in high-GPR regime — exiting position"

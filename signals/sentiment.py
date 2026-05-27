@@ -42,6 +42,9 @@ import logging
 import sys
 import time
 import zipfile
+
+# GKG fields can exceed the 131072-byte default; raise the limit once at import
+csv.field_size_limit(sys.maxsize)
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
