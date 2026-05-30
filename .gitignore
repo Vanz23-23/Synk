@@ -21,6 +21,7 @@ backtest/results_summary_cooldown.txt
 backtest/results_summary_universe.txt
 backtest/results_summary_universe_validate.txt
 backtest/results_defence_beta_isolation.txt
+backtest/results_defence_sleeve_overlay.txt
 
 # Caches & runtime data
 data/price_cache/

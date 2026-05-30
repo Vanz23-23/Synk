@@ -92,8 +92,37 @@ Per-trade test: did gated entries beat a random same-length hold of the same sto
 
 Result `.txt`/`.csv` outputs are gitignored per repo convention ("scripts ship; results don't").
 
+## Deliberate defence-beta sleeve (DECISION)
+
+Since the defence contribution is beta, take it deliberately as a SEPARATE
+buy-and-hold sleeve held OUTSIDE Synk's gated logic + kill-switch (a manual
+portfolio tilt), not via gated single-names. Prototype: `backtest/defence_sleeve_overlay.py`.
+
+Vehicle comparison (buy-and-hold, 2020-2026): PPA dominates —
+  ITA +99.9% / -51.0% DD / 0.570 Sharpe
+  PPA +134.8% / -43.9% DD / 0.728 Sharpe  ← chosen
+  XAR +124.7% / -46.4% DD / 0.626 Sharpe
+
+Blend (Synk gated baseline + PPA sleeve, annual rebalance). **Synk<->PPA daily
+correlation = +0.012** (near-zero) — this is why a small sleeve helps so much:
+
+| Sleeve weight | 0% | 10% | 15% | 20% | 100% |
+|---|---|---|---|---|---|
+| Total return | +4.4% | +14.1% | +19.1% | +24.3% | +131.9% |
+| CAGR | +0.7% | +2.2% | +3.0% | +3.7% | +15.1% |
+| Max DD | −2.9% | −5.5% | −7.7% | −9.9% | −43.9% |
+| Sharpe | 0.43 | 0.83 | 0.82 | 0.81 | 0.72 |
+
+**DECISION: PPA sleeve at 15–20% weight** (user-selected). 15% is the better
+risk-adjusted point (Sharpe 0.82, DD −7.7%); 20% for more return (CAGR +3.7%,
+DD −9.9%). Sharpe lift is from diversification (near-zero correlation), NOT alpha.
+
+Caveats: same 2022-25 rearmament window (forward CAGR likely lower); correlations
+rise in crises; sleeve drawdown is uncapped by design (must tolerate ~-44% on the
+sleeve portion). Execution is a MANUAL buy by the operator — not automated in Synk.
+
 ## Open decisions
 
 1. Does Gate 3 (sentiment) belong in the live stack? (weak/marginally dilutive)
-2. Deliberate defence-beta allocation as a conscious portfolio tilt — design pending.
-3. One-position-per-symbol refactor — confirmed bottleneck, but no lever showed alpha, so frequency-for-its-own-sake is not advised.
+2. One-position-per-symbol refactor — confirmed bottleneck, but no lever showed alpha, so frequency-for-its-own-sake is not advised.
+3. Sleeve rebalance discipline (annual assumed) and funding source vs Synk capital — operational detail to settle before executing.
