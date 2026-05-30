@@ -21,10 +21,9 @@ Gate 2 - Momentum
     Computed from self.get_historical_prices() on every bar.
 
 Gate 3 - Sentiment
-    # SENTIMENT GATE OMITTED -- backtest results are optimistic
-    # by ~15-25% vs live performance. FinBERT cannot be run
-    # retrospectively on historical GDELT data. Gate 3 is treated
-    # as always-open for backtest purposes.
+    Loaded from pre-computed parquet: backtest/results/historical_sentiment_*.parquet
+    Column used: LIVE_GATE_COLUMN (gate_at_p55_s20).
+    Defaults to always-open if parquet is missing.
 
 =======================================================================
 POSITION SIZING  (Quarter-Kelly -- matches synk_strategy.py exactly)
@@ -116,6 +115,7 @@ from lumibot.backtesting import YahooDataBacktesting
 # Synk signal imports
 # ---------------------------------------------------------------------------
 from signals.regime_filter import get_regime_series, _DEFAULT_GPR_PATH
+from backtest.historical_sentiment import LIVE_GATE_COLUMN
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -143,6 +143,10 @@ _WIN_RATE: float = 0.50
 _AVG_WIN_RATIO: float = 1.50
 
 REGIME_Z_THRESHOLD: float = 0.50
+# Per-symbol defence regime gate. Live uses z >= 1.0 (synk_strategy._DEFENCE_Z_THRESHOLD).
+# Default 0.5 here is a no-op (day-level gate already enforces z >= 0.5), preserving
+# canonical-run behaviour. Patch to 1.0 to reproduce the live defence gate.
+DEFENCE_Z_THRESHOLD: float = 0.50
 STOP_LOSS_PCT: float = 0.02
 MOMENTUM_BARS: int = 25        # 25 daily bars; need 21 for ROC(20) + margin
 COOLDOWN_TRADING_DAYS: int = 3
@@ -150,6 +154,8 @@ DRAWDOWN_HALT_PCT: float = 0.30
 DAILY_LOSS_HALT_PCT: float = 0.05
 
 _RESULTS_DIR = Path(__file__).parent / "results"
+_RESULTS_3GATE_DIR = _RESULTS_DIR / "3gate"
+_SENTIMENT_PARQUET = _RESULTS_DIR / "historical_sentiment_2020-01-01_2026-01-01.parquet"
 
 # ---------------------------------------------------------------------------
 # Slippage scenarios
@@ -174,6 +180,17 @@ SLIPPAGE_SCENARIOS: dict[str, dict[str, float]] = {
 # ---------------------------------------------------------------------------
 _COLLECTOR: list[dict] = []
 
+# Skip-reason diagnostic counters -- reset before each scenario run.
+# Lives at module level (not on the strategy instance) because
+# Strategy.backtest() returns a result object, not the instance --
+# same pattern as _COLLECTOR.
+_SKIP_COLLECTOR: dict[str, int] = {}
+
+
+def _skip(reason: str) -> None:
+    """Tally one entry-loop decision by reason for the bottleneck diagnostic."""
+    _SKIP_COLLECTOR[reason] = _SKIP_COLLECTOR.get(reason, 0) + 1
+
 
 # ---------------------------------------------------------------------------
 # Strategy
@@ -181,7 +198,8 @@ _COLLECTOR: list[dict] = []
 class SynkBacktest(Strategy):
     """
     Iterates once per trading day. Evaluates regime and momentum gates per
-    symbol; sentiment gate omitted (always-open -- see module docstring).
+    symbol; sentiment gate loaded from pre-computed parquet (see module docstring).
+    Entry-loop decisions are tallied in _SKIP_COLLECTOR for bottleneck diagnostics.
     """
 
     # ------------------------------------------------------------------
@@ -210,6 +228,28 @@ class SynkBacktest(Strategy):
             f"GPR loaded | {len(regime_signals)} signals | "
             f"{self._gpr_z.index[0].date()} -> {self._gpr_z.index[-1].date()}"
         )
+
+        # Gate 3: load pre-computed sentiment gate from historical parquet
+        self._sentiment_gate: pd.Series | None = None
+        if _SENTIMENT_PARQUET.exists():
+            _sent_df = pd.read_parquet(_SENTIMENT_PARQUET)
+            _sent_df["date"] = pd.to_datetime(_sent_df["date"])
+            self._sentiment_gate = (
+                _sent_df.set_index("date")[LIVE_GATE_COLUMN]
+                .sort_index()
+                .reindex(
+                    pd.bdate_range(_sent_df["date"].min(), _sent_df["date"].max()),
+                    method="ffill",
+                )
+            )
+            self.log_message(
+                f"Sentiment gate loaded: {len(self._sentiment_gate)} rows | "
+                f"column={LIVE_GATE_COLUMN}"
+            )
+        else:
+            self.log_message(
+                f"[WARN] Sentiment parquet not found — Gate 3 always-open: {_SENTIMENT_PARQUET.name}"
+            )
 
         self._peak_nav: float = INITIAL_BUDGET
         self._strategy_halted: bool = False
@@ -270,6 +310,16 @@ class SynkBacktest(Strategy):
         sma20 = float(closes[-20:].mean())
         roc20 = (current - prior20) / prior20 if prior20 != 0.0 else 0.0
         return (roc20 > 0.0 and current > sma20), current
+
+    def _gate3_sentiment(self, dt: datetime) -> bool:
+        """Gate 3: pre-computed FinBERT gate for this date. True (open) if outside coverage."""
+        if self._sentiment_gate is None:
+            return True
+        key = pd.Timestamp(dt.date())
+        try:
+            return bool(self._sentiment_gate.loc[key])
+        except KeyError:
+            return True  # out of parquet range → treat as open
 
     def _in_cooldown(self, symbol: str, today: pd.Timestamp) -> bool:
         last = self._last_exit.get(symbol)
@@ -428,27 +478,41 @@ class SynkBacktest(Strategy):
         # ?? Entry logic ??
         z = self._gpr_z_for(dt)
         if z is None:
+            _skip("regime_no_data")
             return  # before GPR data begins
         if z < REGIME_Z_THRESHOLD:
+            _skip("regime_closed_day")
             return  # Gate 1 closed (NORMAL regime)
+        _skip("regime_open_day")
 
         for sym in SYMBOLS:
+            # Gate 1 (per-symbol): defence names require a higher regime z.
+            # Mirrors live synk_strategy._DEFENCE_Z_THRESHOLD.
+            if sym in _DEFENCE and z < DEFENCE_Z_THRESHOLD:
+                _skip("regime_defence_closed")
+                continue
             # Only one position per symbol at a time
             if sym in self._open_entries or sym in self._pending_exits:
+                _skip("occupied")
                 continue
             if self.get_position(sym) is not None:
+                _skip("occupied")
                 continue
             # 3-day post-exit cooldown
             if self._in_cooldown(sym, today):
+                _skip("cooldown")
                 continue
 
             # Gate 2 -- momentum
             mom_open, cp_raw = self._gate2_momentum(sym)
             if not mom_open or cp_raw <= 0.0:
+                _skip("momentum_closed")
                 continue
 
-            # SENTIMENT GATE OMITTED -- backtest results are optimistic by ~15-25% vs live performance.
-            # Gate 3 is treated as always-open; FinBERT cannot be run retrospectively on GDELT.
+            # Gate 3 — sentiment (pre-computed FinBERT via historical_sentiment.py)
+            if not self._gate3_sentiment(dt):
+                _skip("sentiment_closed")
+                continue
 
             cp = float(cp_raw)
             slip = self._slip.get(sym, 10.0)
@@ -456,6 +520,7 @@ class SynkBacktest(Strategy):
 
             qty = self._quantity(nav, buy_limit)
             if qty == 0:
+                _skip("qty_zero")
                 self.log_message(
                     f"SKIP {sym} | qty=0 | "
                     f"nav=${nav:,.0f} price=${buy_limit:.2f} "
@@ -476,6 +541,7 @@ class SynkBacktest(Strategy):
                 "ref_price": buy_limit,  # close * (1 + slip_bps) — slippage reference
                 "qty": qty,
             }
+            _skip("entered")
             self.log_message(
                 f"ENTRY {sym} | z={z:.3f} | cp=${cp:.2f} "
                 f"ref=${buy_limit:.2f} (+{slip:.0f}bps slippage) | "
@@ -611,11 +677,12 @@ def run_scenario(
     """Run backtest for one slippage scenario. Returns (stats, trades)."""
     global _COLLECTOR
     _COLLECTOR.clear()
+    _SKIP_COLLECTOR.clear()
 
-    _RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-    stats_file = str(_RESULTS_DIR / f"stats_{scenario_name}.csv")
-    trades_file = str(_RESULTS_DIR / f"trades_{scenario_name}.csv")
-    tearsheet_file = str(_RESULTS_DIR / f"tearsheet_{scenario_name}.html")
+    _RESULTS_3GATE_DIR.mkdir(parents=True, exist_ok=True)
+    stats_file = str(_RESULTS_3GATE_DIR / f"stats_{scenario_name}.csv")
+    trades_file = str(_RESULTS_3GATE_DIR / f"trades_{scenario_name}.csv")
+    tearsheet_file = str(_RESULTS_3GATE_DIR / f"tearsheet_{scenario_name}.html")
 
     log.info("")
     log.info("=" * 60)
@@ -643,6 +710,7 @@ def run_scenario(
 
     trades = list(_COLLECTOR)
     stats = _parse_result(result, trades, stats_file)
+    stats["skip_diag"] = dict(_SKIP_COLLECTOR)
 
     log.info(
         "Scenario %s complete | trades=%d win_rate=%.1f%%",
@@ -650,7 +718,26 @@ def run_scenario(
         stats["total_trades"],
         stats["win_rate"] * 100,
     )
+    log.info("SKIP DIAGNOSTIC (%s): %s", scenario_name, format_skip_diag(_SKIP_COLLECTOR))
     return stats, trades
+
+
+def format_skip_diag(diag: dict[str, int]) -> str:
+    """Render the entry-loop skip-reason tally as a compact one-line string.
+
+    Day-level: regime_open_day / regime_closed_day / regime_no_data.
+    Symbol-level (only on regime-open days): occupied, cooldown,
+    momentum_closed, sentiment_closed, qty_zero, entered.
+    """
+    order = [
+        "regime_open_day", "regime_closed_day", "regime_no_data",
+        "regime_defence_closed", "occupied", "cooldown", "momentum_closed",
+        "sentiment_closed", "qty_zero", "entered",
+    ]
+    parts = [f"{k}={diag.get(k, 0)}" for k in order if k in diag]
+    # surface any unexpected keys too
+    parts += [f"{k}={v}" for k, v in diag.items() if k not in order]
+    return " | ".join(parts) if parts else "(no data)"
 
 
 # ---------------------------------------------------------------------------
@@ -698,7 +785,7 @@ def print_and_save_summary(
         f"SYNK BACKTEST RESULTS -- {run_date}",
         "================================",
         "Date range: 2020-01-01 to 2026-01-01",
-        "Sentiment gate: OMITTED (results optimistic by ~15-25% vs live performance)",
+        f"Sentiment gate: INCLUDED (pre-computed FinBERT/GDELT | column={LIVE_GATE_COLUMN})",
         f"Starting capital: ${INITIAL_BUDGET:,.0f}",
         "",
         f"{'':16} {'OPTIMISTIC':>14} {'BASE':>10} {'PESSIMISTIC':>13}",
@@ -722,18 +809,23 @@ def print_and_save_summary(
         "BENCHMARK (GLD buy-and-hold):",
         f"  Total return:  {_fmt(benchmark.get('total_return', 'N/A'), pct=True)}",
         f"  Max drawdown:  {_fmt(benchmark.get('max_drawdown', 'N/A'), pct=True)}",
+        "",
+        "ENTRY-LOOP SKIP DIAGNOSTIC (base scenario):",
+        f"  {format_skip_diag(scenario_results.get('base', {}).get('skip_diag', {}))}",
+        "  (regime_*_day = day-level; occupied/cooldown/momentum/sentiment/qty_zero",
+        "   = per-symbol on regime-open days; entered ~= total trades)",
     ]
 
     output = "\n".join(lines)
     print("\n" + output + "\n")
 
-    summary_path = Path(__file__).parent / "results_summary.txt"
+    summary_path = Path(__file__).parent / "results_summary_3gate.txt"
     summary_path.write_text(output, encoding="utf-8")
     log.info("Summary saved -> %s", summary_path)
 
 
 def save_trades_csv(trades: list[dict]) -> None:
-    trades_path = Path(__file__).parent / "trades_log.csv"
+    trades_path = Path(__file__).parent / "trades_log_3gate.csv"
     fieldnames = [
         "symbol", "entry_date", "exit_date",
         "entry_price", "exit_price", "quantity",
@@ -751,14 +843,15 @@ def save_trades_csv(trades: list[dict]) -> None:
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     _RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    _RESULTS_3GATE_DIR.mkdir(parents=True, exist_ok=True)
 
     print("\n" + "=" * 60)
-    print("SYNK BACKTEST  2020-01-01 -> 2026-01-01")
+    print("SYNK BACKTEST (3-GATE)  2020-01-01 -> 2026-01-01")
     print(f"Symbols:  {SYMBOLS}")
     print(f"Budget:   ${INITIAL_BUDGET:,.0f}")
     print(f"Benchmark: GLD buy-and-hold (Lumibot internal benchmark: SPY)")
-    print("WARNING: Sentiment gate OMITTED -- results are two-gate only.")
-    print("         Expect ~15-25% optimism vs live three-gate strategy.")
+    print(f"Gate 3:   sentiment included ({LIVE_GATE_COLUMN})")
+    print(f"Results:  {_RESULTS_3GATE_DIR}")
     print("=" * 60 + "\n")
 
     all_stats: dict[str, dict[str, Any]] = {}
@@ -777,7 +870,7 @@ if __name__ == "__main__":
     else:
         log.warning("No trades recorded across all scenarios.")
 
-    print(f"\nTearsheets -> {_RESULTS_DIR}/tearsheet_{{scenario}}.html")
-    print(f"Stats CSVs -> {_RESULTS_DIR}/stats_{{scenario}}.csv")
-    print(f"Summary   -> {Path(__file__).parent / 'results_summary.txt'}")
-    print(f"Trades    -> {Path(__file__).parent / 'trades_log.csv'}")
+    print(f"\nTearsheets -> {_RESULTS_3GATE_DIR}/tearsheet_{{scenario}}.html")
+    print(f"Stats CSVs -> {_RESULTS_3GATE_DIR}/stats_{{scenario}}.csv")
+    print(f"Summary   -> {Path(__file__).parent / 'results_summary_3gate.txt'}")
+    print(f"Trades    -> {Path(__file__).parent / 'trades_log_3gate.csv'}")

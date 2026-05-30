@@ -70,8 +70,8 @@ SCENARIOS: dict[str, dict] = {
             timestamp=_NOW,
             headline_count=50,
             dominant_class="neutral",
-            dominant_prob=0.45,     # below 0.6 threshold
-            sentiment_score=-0.10,  # abs < 0.3 threshold
+            dominant_prob=0.45,     # below 0.55 threshold
+            sentiment_score=-0.10,  # abs < 0.20 threshold
             signal=False,
         ),
         "safe_haven": {"confirmed": True, "return_5d": 0.005, "regime": "SAFE_HAVEN"},
@@ -96,8 +96,8 @@ SCENARIOS: dict[str, dict] = {
             timestamp=_NOW,
             headline_count=50,
             dominant_class="neutral",
-            dominant_prob=0.58,     # just below 0.6 - gate 2 CLOSED
-            sentiment_score=-0.27,  # abs just below 0.3 - gate 2 CLOSED
+            dominant_prob=0.51,     # just below 0.55 - gate 2 CLOSED
+            sentiment_score=-0.17,  # abs just below 0.20 - gate 2 CLOSED
             signal=False,
         ),
         "safe_haven": {"confirmed": True, "return_5d": 0.012, "regime": "SAFE_HAVEN"},
@@ -154,8 +154,8 @@ def evaluate_scenario(name: str, s: dict) -> GateResult:
     if not sentiment_gate_open(sentiment):
         closed.append(
             f"SENTIMENT=CLOSED  class={sentiment.dominant_class}, "
-            f"prob={sentiment.dominant_prob:.3f} (need >0.6), "
-            f"score={sentiment.sentiment_score:+.3f} (need abs >0.3)"
+            f"prob={sentiment.dominant_prob:.3f} (need >0.55), "
+            f"score={sentiment.sentiment_score:+.3f} (need abs >0.20)"
         )
     if not safe_haven["confirmed"]:
         closed.append(

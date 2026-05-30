@@ -72,7 +72,7 @@ def print_and_save(results: dict[float, dict]) -> None:
 
     lines = [
         f"REGIME THRESHOLD COMPARISON — {run_date}",
-        "Base slippage | Gate 3 (sentiment) OMITTED | 2020-01-01 to 2026-01-01",
+        f"Base slippage | Gate 3 (sentiment) INCLUDED ({bt.LIVE_GATE_COLUMN}) | 2020-01-01 to 2026-01-01",
         "",
         f"  {'':18}{header_vals}",
         divider,
@@ -90,8 +90,8 @@ def print_and_save(results: dict[float, dict]) -> None:
         "",
         "NOTE: GLD trades = 0 — Lumibot won't trade the benchmark asset (GLD).",
         "      In the live strategy GLD IS tradeable. See synk_backtest.py.",
-        "NOTE: Sentiment gate omitted — all figures ~15-25% optimistic vs live.",
-        "      Relative comparison between thresholds remains valid.",
+        "NOTE: 3-gate stack (regime + momentum + sentiment). Sentiment held at",
+        f"      {bt.LIVE_GATE_COLUMN}; only the regime z-threshold varies across columns.",
     ]
 
     output = "\n".join(lines)
@@ -108,7 +108,7 @@ if __name__ == "__main__":
     print("SYNK REGIME THRESHOLD COMPARISON")
     print(f"Thresholds: {THRESHOLDS}")
     print("Scenario:   base slippage")
-    print("Sentiment gate OMITTED — results optimistic vs live.")
+    print("Sentiment gate INCLUDED (3-gate stack).")
     print("=" * 60)
 
     results = run_all()

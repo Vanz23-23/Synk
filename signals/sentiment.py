@@ -19,7 +19,7 @@ Signal logic:
     5. Aggregate per-headline probabilities:
          dominant_class = argmax(mean probability across all headlines)
          sentiment_score = mean(positive_prob) - mean(negative_prob)
-    6. Gate opens when dominant_prob > 0.6 AND abs(sentiment_score) > 0.3.
+    6. Gate opens when dominant_prob > 0.55 AND abs(sentiment_score) > 0.20.
     7. Append SentimentSignal to logs/sentiment_cache.jsonl.
 
 Usage (standalone — runs one scheduled cycle):
@@ -70,8 +70,8 @@ _MAX_HEADLINES = 50              # cap to keep inference time bounded
 _BATCH_SIZE = 16                 # FinBERT batch size (fits comfortably in RAM)
 _MAX_TOKEN_LENGTH = 512          # BERT max sequence length
 
-_DOMINANT_PROB_THRESHOLD = 0.6   # gate condition 1
-_SENTIMENT_SCORE_THRESHOLD = 0.3  # gate condition 2: abs(sentiment_score) > this
+_DOMINANT_PROB_THRESHOLD = 0.55  # gate condition 1
+_SENTIMENT_SCORE_THRESHOLD = 0.20  # gate condition 2: abs(sentiment_score) > this
 
 # GDELT headline sourcing
 _MASTERFILE_URL = "http://data.gdeltproject.org/gdeltv2/masterfilelist.txt"
@@ -401,7 +401,7 @@ def get_latest_cached() -> SentimentSignal | None:
 
 
 def is_gate_open(signal: SentimentSignal) -> bool:
-    """True when dominant_prob > 0.6 AND abs(sentiment_score) > 0.3."""
+    """True when dominant_prob > 0.55 AND abs(sentiment_score) > 0.20."""
     return signal.signal
 
 

@@ -10,10 +10,17 @@ logs/
 backtest/results/
 backtest/trades_log.csv
 backtest/trades_log_haven.csv
+backtest/trades_log_3gate.csv
 backtest/haven_exit_breakdown.txt
 backtest/regime_comparison_results.txt
 backtest/results_summary.txt
 backtest/results_summary_haven.txt
+backtest/results_summary_3gate.txt
+backtest/results_summary_haven_3gate.txt
+backtest/results_summary_cooldown.txt
+backtest/results_summary_universe.txt
+backtest/results_summary_universe_validate.txt
+backtest/results_defence_beta_isolation.txt
 
 # Caches & runtime data
 data/price_cache/

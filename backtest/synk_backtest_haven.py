@@ -43,6 +43,7 @@ if str(_HERE) not in sys.path:
 from lumibot.strategies import Strategy
 from lumibot.backtesting import YahooDataBacktesting
 from signals.regime_filter import get_regime_series, _DEFAULT_GPR_PATH
+from backtest.historical_sentiment import LIVE_GATE_COLUMN
 
 log = logging.getLogger("synk_backtest_haven")
 if not log.handlers:
@@ -71,6 +72,8 @@ DRAWDOWN_HALT_PCT: float = 0.30
 DAILY_LOSS_HALT_PCT: float = 0.05
 
 _RESULTS_DIR = Path(__file__).parent / "results" / "haven"
+_RESULTS_3GATE_DIR = _RESULTS_DIR / "3gate"
+_SENTIMENT_PARQUET = Path(__file__).parent / "results" / "historical_sentiment_2020-01-01_2026-01-01.parquet"
 
 SLIPPAGE_SCENARIOS: dict[str, dict[str, float]] = {
     "optimistic": {"GLD":  2.0, "FXY": 10.0},
@@ -103,6 +106,22 @@ class SynkHavenBacktest(Strategy):
             f"GPR loaded | {len(regime_signals)} signals | "
             f"{self._gpr_z.index[0].date()} -> {self._gpr_z.index[-1].date()}"
         )
+
+        self._sentiment_gate: pd.Series | None = None
+        if _SENTIMENT_PARQUET.exists():
+            _sent_df = pd.read_parquet(_SENTIMENT_PARQUET)
+            _sent_df["date"] = pd.to_datetime(_sent_df["date"])
+            self._sentiment_gate = (
+                _sent_df.set_index("date")[LIVE_GATE_COLUMN]
+                .sort_index()
+                .reindex(
+                    pd.bdate_range(_sent_df["date"].min(), _sent_df["date"].max()),
+                    method="ffill",
+                )
+            )
+            self.log_message(f"Sentiment gate loaded: {len(self._sentiment_gate)} rows | column={LIVE_GATE_COLUMN}")
+        else:
+            self.log_message(f"[WARN] Sentiment parquet not found — Gate 3 always-open: {_SENTIMENT_PARQUET.name}")
 
         self._peak_nav: float = INITIAL_BUDGET
         self._strategy_halted: bool = False
@@ -147,6 +166,16 @@ class SynkHavenBacktest(Strategy):
         sma20 = float(closes[-20:].mean())
         roc20 = (current - prior20) / prior20 if prior20 != 0.0 else 0.0
         return (roc20 > 0.0 and current > sma20), current
+
+    def _gate3_sentiment(self, dt: datetime) -> bool:
+        """Gate 3: pre-computed FinBERT gate for this date. True (open) if outside coverage."""
+        if self._sentiment_gate is None:
+            return True
+        key = pd.Timestamp(dt.date())
+        try:
+            return bool(self._sentiment_gate.loc[key])
+        except KeyError:
+            return True
 
     def _in_cooldown(self, symbol: str, today: pd.Timestamp) -> bool:
         last = self._last_exit.get(symbol)
@@ -273,8 +302,9 @@ class SynkHavenBacktest(Strategy):
             if not mom_open or cp_raw <= 0.0:
                 continue
 
-            # SENTIMENT GATE OMITTED -- backtest results are optimistic by ~15-25% vs live performance.
-            # Gate 3 is treated as always-open; FinBERT cannot be run retrospectively on GDELT.
+            # Gate 3 — sentiment (pre-computed FinBERT via historical_sentiment.py)
+            if not self._gate3_sentiment(dt):
+                continue
 
             cp = float(cp_raw)
             slip = self._slip.get(sym, 10.0)
@@ -367,10 +397,10 @@ def run_scenario(scenario_name: str, slippage_bps: dict[str, float]) -> tuple[di
     global _COLLECTOR
     _COLLECTOR.clear()
 
-    _RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-    stats_file     = str(_RESULTS_DIR / f"stats_{scenario_name}.csv")
-    trades_file    = str(_RESULTS_DIR / f"trades_{scenario_name}.csv")
-    tearsheet_file = str(_RESULTS_DIR / f"tearsheet_{scenario_name}.html")
+    _RESULTS_3GATE_DIR.mkdir(parents=True, exist_ok=True)
+    stats_file     = str(_RESULTS_3GATE_DIR / f"stats_{scenario_name}.csv")
+    trades_file    = str(_RESULTS_3GATE_DIR / f"trades_{scenario_name}.csv")
+    tearsheet_file = str(_RESULTS_3GATE_DIR / f"tearsheet_{scenario_name}.html")
 
     log.info("")
     log.info("=" * 60)
@@ -431,7 +461,7 @@ def print_and_save_summary(scenario_results: dict[str, dict[str, Any]], benchmar
         "========================================",
         "Symbols:    GLD + FXY only (defence excluded)",
         "Date range: 2020-01-01 to 2026-01-01",
-        "Sentiment gate: OMITTED (results optimistic by ~15-25% vs live performance)",
+        f"Sentiment gate: INCLUDED (pre-computed FinBERT/GDELT | column={LIVE_GATE_COLUMN})",
         f"Starting capital: ${INITIAL_BUDGET:,.0f}",
         "",
         f"{'':16} {'OPTIMISTIC':>14} {'BASE':>10} {'PESSIMISTIC':>13}",
@@ -454,13 +484,13 @@ def print_and_save_summary(scenario_results: dict[str, dict[str, Any]], benchmar
     output = "\n".join(lines)
     print("\n" + output + "\n")
 
-    summary_path = Path(__file__).parent / "results_summary_haven.txt"
+    summary_path = Path(__file__).parent / "results_summary_haven_3gate.txt"
     summary_path.write_text(output, encoding="utf-8")
     log.info("Summary saved -> %s", summary_path)
 
 
 def save_trades_csv(trades: list[dict]) -> None:
-    trades_path = Path(__file__).parent / "trades_log_haven.csv"
+    trades_path = Path(__file__).parent / "trades_log_haven_3gate.csv"
     fieldnames = ["symbol", "entry_date", "exit_date", "entry_price", "exit_price", "quantity", "pnl_pct", "exit_reason", "slippage_scenario"]
     with open(trades_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
@@ -471,12 +501,13 @@ def save_trades_csv(trades: list[dict]) -> None:
 
 if __name__ == "__main__":
     _RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    _RESULTS_3GATE_DIR.mkdir(parents=True, exist_ok=True)
 
     print("\n" + "=" * 60)
-    print("SYNK HAVEN-ONLY BACKTEST  2020-01-01 -> 2026-01-01")
+    print("SYNK HAVEN-ONLY BACKTEST (3-GATE)  2020-01-01 -> 2026-01-01")
     print(f"Symbols:  {SYMBOLS}  (defence excluded)")
     print(f"Budget:   ${INITIAL_BUDGET:,.0f}")
-    print("WARNING: Sentiment gate OMITTED -- two-gate results only.")
+    print(f"Gate 3:   sentiment included ({LIVE_GATE_COLUMN})")
     print("=" * 60 + "\n")
 
     all_stats: dict[str, dict[str, Any]] = {}
@@ -495,5 +526,5 @@ if __name__ == "__main__":
     else:
         log.warning("No trades recorded.")
 
-    print(f"\nResults -> {Path(__file__).parent / 'results_summary_haven.txt'}")
-    print(f"Trades  -> {Path(__file__).parent / 'trades_log_haven.csv'}")
+    print(f"\nResults -> {Path(__file__).parent / 'results_summary_haven_3gate.txt'}")
+    print(f"Trades  -> {Path(__file__).parent / 'trades_log_haven_3gate.csv'}")

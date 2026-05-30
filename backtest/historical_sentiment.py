@@ -106,7 +106,7 @@ _TARGET_HOUR = 14        # 14:00 UTC for each daily reading
 _FETCH_TIMEOUT = 30      # seconds — historical server can be slower than live
 
 # Threshold grid: 4 p-values × 4 s-values = 16 gate columns
-# Current live thresholds: p=0.60, s=0.30 → column "gate_at_p60_s30"
+# Current live thresholds: p=0.55, s=0.20 → column "gate_at_p55_s20"
 _P_THRESHOLDS = (0.45, 0.50, 0.55, 0.60)
 _S_THRESHOLDS = (0.10, 0.15, 0.20, 0.30)
 
@@ -120,7 +120,7 @@ def _col(p: float, s: float) -> str:
 GATE_COLUMNS: list[str] = [_col(p, s) for p in _P_THRESHOLDS for s in _S_THRESHOLDS]
 
 # Convenience alias for the current live threshold pair
-LIVE_GATE_COLUMN = _col(0.60, 0.30)  # "gate_at_p60_s30"
+LIVE_GATE_COLUMN = _col(0.55, 0.20)  # "gate_at_p55_s20"
 
 
 # ---------------------------------------------------------------------------
@@ -292,7 +292,7 @@ def score_date_range(
 
     Year-chunked for resumability:
         - Each calendar year writes its own intermediate parquet.
-        - A complete chunk (≥200 rows) is skipped on subsequent runs.
+        - Already-scored dates are skipped; partial chunks resume mid-year.
         - The final merged parquet is always rewritten from the year chunks.
 
     Returns the merged DataFrame (all dates, sorted).
